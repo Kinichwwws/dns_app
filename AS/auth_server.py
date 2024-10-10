@@ -1,45 +1,69 @@
-from flask import Flask, request, jsonify
+# AS/auth_server.py
+import socket
 import json
-import os
 
-app = Flask(__name__)
-
-
-@app.route('/home')
-def AS_home():
-    return "This is AS home page"
+DNS_FILE = 'dns_records.json'
 
 
-@app.route('/', methods=['GET', 'POST'])
-def AS():
-    file = 'address_map.json'
-    if not os.path.exists(file):
-        os.system(r'touch address_map.json')
-        file = 'address_map.json'
-
-    ## US ask ip address of a hostname
-    if request.method == 'GET':
-        key = request.args.get('name')
-        with open(file, 'r') as json_file:
-            data = json.load(json_file)
-            if key not in data:
-                return jsonify({"error": "hostname not found"}), 404
-            else:
-                address = data.get(key)
-                return jsonify({"address": address}), 200
-
-    ## FS register information in AS
-    elif request.method == 'POST':
-        data_get = request.form
-        host_name = data_get['name']
-        ip_address = data_get['address']
-        dict = {}
-        dict[host_name] = ip_address
-        with open(file, 'w') as json_file:
-            json.dump(dict, json_file)
-        return jsonify({"success registered": True}), 201
+def load_dns_records():
+    try:
+        with open(DNS_FILE, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return {}
 
 
-app.run(host='0.0.0.0',
-        port=53533,
-        debug=True)
+def save_dns_records(records):
+    with open(DNS_FILE, 'w') as f:
+        json.dump(records, f)
+
+
+def handle_registration(data):
+    lines = data.split('\n')
+    record = {}
+    for line in lines:
+        if '=' in line:
+            key, value = line.split('=')
+            record[key] = value
+
+    dns_records = load_dns_records()
+    dns_records[record['NAME']] = record
+    save_dns_records(dns_records)
+
+
+def handle_query(data):
+    lines = data.split('\n')
+    query = {}
+    for line in lines:
+        if '=' in line:
+            key, value = line.split('=')
+            query[key] = value
+
+    dns_records = load_dns_records()
+    if query['NAME'] in dns_records:
+        record = dns_records[query['NAME']]
+        response = f"TYPE={record['TYPE']}\nNAME={record['NAME']}\nVALUE={record['VALUE']}\nTTL={record['TTL']}\n"
+        return response.encode()
+    else:
+        return b"NOTFOUND"
+
+
+def main():
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    server_socket.bind(('0.0.0.0', 53533))
+
+    print("Authoritative Server is running...")
+
+    while True:
+        data, addr = server_socket.recvfrom(1024)
+        data = data.decode()
+
+        if 'TYPE' in data and 'NAME' in data and 'VALUE' in data:
+            handle_registration(data)
+            server_socket.sendto(b"OK", addr)
+        elif 'TYPE' in data and 'NAME' in data:
+            response = handle_query(data)
+            server_socket.sendto(response, addr)
+
+if __name__ == '__main__':
+    main()

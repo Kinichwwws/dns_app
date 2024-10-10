@@ -1,66 +1,37 @@
-from flask import Flask, request, jsonify
-import requests, socket
+# US/user_server.py
+from flask import Flask, request
+import requests
+import socket
 
 app = Flask(__name__)
 
-def query_authoritative_server(as_ip, as_port, hostname):
-    # queries for authoritative server for IP address of the given hostname.
-    message = f"TYPE=A\nNAME={hostname}\n"
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.settimeout(2)
-
-    try:
-        sock.sendto(message.encode(), (as_ip, as_port))
-        response, _ = sock.recvfrom(1024)
-
-        lines = response.decode().splitlines()
-        for line in lines:
-            if line.startswith("TYPE="):
-                return line.split('=')[1]
-    except socket.timeout:
-        print("Socket timeout")
-        return None
-    finally:
-        sock.close()
-
-    return None
-
-@app.route('/')
-def hello_world():
-    return 'Hello World! This is User Server!'
-
-@app.route("/fibonacci", methods=['GET'])
-def get_fibonacci():
-    hostname = request.args.get("hostname")
-    fs_port = request.args.get("fs_port")
-    number = request.args.get("number")
-    as_ip = request.args.get("as_ip")
-    as_port = request.args.get("as_port")
+@app.route('/fibonacci')
+def fibonacci():
+    hostname = request.args.get('hostname')
+    fs_port = request.args.get('fs_port')
+    number = request.args.get('number')
+    as_ip = request.args.get('as_ip')
+    as_port = request.args.get('as_port')
 
     if not all([hostname, fs_port, number, as_ip, as_port]):
-        return jsonify({"status": "error", "message": "Missing parameters"}), 400
+        return "Bad Request: Missing parameters", 400
 
-    # Query AS for IP address of Fibonacci Server
-    fs_if = query_authoritative_server(as_ip, as_port, hostname)
+    # Query AS to get IP address for the hostname
+    dns_query = f"TYPE=A\nNAME={hostname}\n"
+    as_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    as_socket.sendto(dns_query.encode(), (as_ip, int(as_port)))
+    response, _ = as_socket.recvfrom(1024)
+    response = response.decode().split('\n')
+    ip_address = response[2].split('=')[1]
 
-    if not fs_if:
-        return jsonify({"status": "error", "message": "Invalid hostname"}), 400
+    # Query FS to get Fibonacci number
+    fs_url = f"http://{ip_address}:{fs_port}/fibonacci?number={number}"
+    response = requests.get(fs_url)
 
-    #request the Fibonacci number from the Fibonacci
+    if response.status_code == 200:
+        return response.text, 200
+    else:
+        return "Error fetching Fibonacci number", response.status_code
 
-    try:
-        response = requests.get(f"http://{fs_if}:{fs_port}" + f"/fibonacci?number={number}", timeout=2)
-        if response.status_code == 200:
-            return jsonify({"status": "ok", "fibonacci": response.json().get("fibonacci")}), 200
-        else:
-            return jsonify({"status": "error", "message": response.text}), 400
-
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080)
-
-
-
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)

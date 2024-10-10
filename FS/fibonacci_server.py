@@ -1,24 +1,7 @@
+import requests
 from flask import Flask, request, jsonify
 import socket
 app = Flask(__name__)
-
-def register_with_authoritative_server(hostname, ip, as_ip, as_port):
-    message = (
-        "TYPE=A\n"
-        f"NAME={hostname}\n"
-        f"VALUE={ip}\n"
-        "TTL=10\n"
-    ).encode('utf-8')
-
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    try:
-        sock.sendto(message, (as_ip, int(as_port)))
-        data, server = sock.recvfrom(1024)
-        print(f"Received response: {data.decode('utf-8')}")
-
-    finally:
-        sock.close()
 
 def fibonacci(n):
     a, b = 0, 1
@@ -30,23 +13,22 @@ def fibonacci(n):
 def hello_world():
     return 'Hello World! This is fibonacci server!'
 
-@app.route('/register' ,methods=['PUT'])
+
+@app.route('/register', methods=['PUT'])
 def register():
+    # 从请求体中获取 JSON 数据
     data = request.json
-    hostname = data.get("hostname")
-    ip = data.get("ip")
-    as_ip = data.get("as_ip")
-    as_port = data.get("as_port")
+    hostname = data['hostname']
+    ip = data['ip']
+    as_ip = data['as_ip']
+    as_port = data['as_port']
 
-    if not hostname or not ip or not as_ip or not as_port:
-        return jsonify({"error": "Missing parameters"}), 400
+    # Register with Authoritative Server
+    dns_registration = f"TYPE=A\nNAME={hostname}\nVALUE={ip}\nTTL=10\n"
+    as_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    as_socket.sendto(dns_registration.encode(), (as_ip, int(as_port)))
 
-    try:
-        register_with_authoritative_server(hostname,ip,as_ip,as_port)
-        return jsonify({"status": "registered"}), 201
-
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+    return "Registration successful", 201
 
 
 @app.route('/fibonacci', methods=['GET'])
@@ -55,11 +37,11 @@ def get_fibonacci():
 
     try:
         x = int(number)
+        result=fibonacci(x)
+        return jsonify({"fibonacci": result}), 200
     except ValueError:
         return "Invalid input, X must be an integer", 400
 
-    result = fibonacci(x)
-    return jsonify({"fibonacci": result}), 200
 
 
 if __name__ == '__main__':
